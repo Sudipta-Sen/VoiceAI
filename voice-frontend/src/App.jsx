@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { GoogleGenAI, Modality } from "@google/genai";
-import { MODEL, API_VERSION, TOKEN_URL } from "./config";
+import { MODEL, API_VERSION, TOKEN_URL, PROCEED_WAIT_MS } from "./config";
 import { Deck, slides } from "./deck";
 import { SYSTEM_INSTRUCTION } from "./prompt";
 import { tools, handleToolCall } from "./tools";
@@ -18,6 +18,10 @@ export default function App() {
   const sourcesRef = useRef([]);      // scheduled sources, so barge-in can stop them
   const [currentSlide, setCurrentSlide] = useState(0);   // which slide is showing
 
+  // --- presentation pacing ---
+  const proceedTimerRef = useRef(null);   // 15s "no question -> next slide" timer
+  const currentSlideRef = useRef(0);      // latest slide index for the timer (no stale closure)
+
   // keyboard nav: left/right arrows move slides (works with OR without voice)
   useEffect(() => {
     function onKey(e) {
@@ -27,6 +31,9 @@ export default function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  // mirror currentSlide into a ref so the pacing timer reads the latest value
+  useEffect(() => { currentSlideRef.current = currentSlide; }, [currentSlide]);
 
   function log(msg) {
     console.log(msg);
@@ -109,6 +116,24 @@ export default function App() {
     nextStartRef.current = 0;
   }
 
+  // ---------- PRESENTATION PACING ----------
+  function cancelProceedTimer() {
+    if (proceedTimerRef.current) { clearTimeout(proceedTimerRef.current); proceedTimerRef.current = null; }
+  }
+
+  // after the model finishes a turn, wait 5s for a question; if silence, tell it to move on
+  function armProceedTimer() {
+    cancelProceedTimer();
+    if (currentSlideRef.current >= slides.length - 1) return;   // last slide: nothing to advance to
+    proceedTimerRef.current = setTimeout(() => {
+      proceedTimerRef.current = null;
+      log(`⏱️ ${PROCEED_WAIT_MS / 1000}s of silence — proceeding`);
+      sessionRef.current?.sendRealtimeInput({
+        text: "The user has no questions. Please continue to the next slide now.",
+      });
+    }, PROCEED_WAIT_MS);
+  }
+
   async function handleStart() {
     setStatus("connecting");
     log("Start clicked — fetching token…");
@@ -141,21 +166,24 @@ export default function App() {
             }
             const c = m.serverContent;
             if (c?.modelTurn?.parts) {
+              cancelProceedTimer();   // model is speaking (answering or advancing)
               for (const part of c.modelTurn.parts) {
                 if (part.inlineData) playChunk(part.inlineData.data);   // <- now PLAYS
                 if (part.text) log("💬 " + part.text);
               }
             }
-            if (c?.interrupted) { log("⛔ interrupted — flushing playback"); stopPlayback(); }
-            if (c?.turnComplete) log("✅ turnComplete");
+            if (c?.interrupted) { log("⛔ interrupted — flushing playback"); stopPlayback(); cancelProceedTimer(); }
+            if (c?.turnComplete) { log("turnComplete ✅"); armProceedTimer(); }
           },
           onerror: (e) => { log("ERROR: " + (e.message || e)); setStatus("error ❌"); },
-          onclose: (e) => { log("closed: " + (e.reason || "")); setStatus("closed"); },
+          onclose: (e) => { log("closed: " + (e.reason || "")); setStatus("closed"); cancelProceedTimer(); },
         },
       });
 
       await startMic();
-      log("Speak now — say “hello” 👋 (headphones on!)");
+      log("▶️ starting presentation (headphones on!)");
+      // kick off: greeting + intro + first slide
+      sessionRef.current?.sendRealtimeInput({ text: "Please begin the presentation now." });
     } catch (err) {
       log("CONNECT ERROR: " + err.message);
       setStatus("error ❌");

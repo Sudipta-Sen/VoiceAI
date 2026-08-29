@@ -10,3 +10,6 @@ export const API_VERSION = "v1beta";
 
 // Our backend's token endpoint.
 export const TOKEN_URL = "http://localhost:8000/token";
+
+// How long to wait (ms) for a question after each slide before auto-advancing.
+export const PROCEED_WAIT_MS = 5000;

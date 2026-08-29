@@ -4,22 +4,22 @@ import { slides } from "../deck";
 
 export const declaration = {
   name: "goto_slide",
-  description: "Show a specific slide in the on-screen deck, by its 0-based index.",
+  description:
+    "Show a specific slide in the on-screen deck. Use the slide NUMBER as shown to the user (the first slide is 1).",
   parameters: {
     type: Type.OBJECT,
     properties: {
-      index: { type: Type.INTEGER, description: "0-based index of the slide to display" },
+      slide: { type: Type.INTEGER, description: "1-based slide number to display (1 = first slide)" },
     },
-    required: ["index"],
+    required: ["slide"],
   },
 };
 
-// runs when the model calls goto_slide. deps = { setCurrentSlide, log, session }.
-// return value becomes the tool response sent back to the model.
+// deps = { setCurrentSlide, log, session }
 export function handler(args, { setCurrentSlide, log }) {
-  const wanted = args?.index ?? 0;
-  const idx = Math.max(0, Math.min(wanted, slides.length - 1));
-  log(`🧭 goto_slide(${wanted}) -> slide ${idx + 1}`);
+  const wanted = args?.slide ?? 1;                                   // 1-based, as the user sees it
+  const idx = Math.max(0, Math.min(wanted - 1, slides.length - 1));  // -> 0-based array index
+  log(`🧭 goto_slide(slide ${wanted}) -> showing slide ${idx + 1}`);
   setCurrentSlide(idx);
   return { result: "ok" };
 }

@@ -2,8 +2,12 @@
 import basePrompt from "./systemPrompt.md?raw";
 import { slides } from "../deck";
 
-const toc = slides.map((s, i) => `  ${i}: ${s.title}`).join("\n");
+// full deck reference: 1-based number, title, and bullets — so the model can
+// narrate accurately and jump to the right slide.
+const deck = slides
+  .map((s, i) => `Slide ${i + 1}: ${s.title}\n${s.bullets.map((b) => `   - ${b}`).join("\n")}`)
+  .join("\n\n");
 
 export const SYSTEM_INSTRUCTION =
   `${basePrompt.trim()}\n\n` +
-  `The deck slides are (index: title):\n${toc}`;
+  `Here is the full deck (slide number, title, and bullets):\n\n${deck}`;

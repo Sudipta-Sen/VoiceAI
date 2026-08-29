@@ -298,6 +298,47 @@ Why each hop:
 
 ---
 
+## Step 2E — Presentation mode (auto-narrate, ask, auto-advance)
+
+**Goal.** On Start, the app runs itself as a hands-free presenter: greet + short
+intro, then present each slide in order (~1-2 min each), pause for questions, and
+auto-advance when there are none.
+
+**Division of labor (the key design point).**
+- The **model** greets, narrates each slide (calling `goto_slide` first), asks
+  "any questions?", answers follow-ups, and treats "no" / "go ahead" as a cue to
+  advance. All of this lives in `prompt/systemPrompt.md` — the model has no clock,
+  so it cannot "wait 8s" itself.
+- The **app** owns only the **8-second silence timer**. On each `turnComplete` it
+  arms a 8s timer; any user speech (a new `modelTurn`) or a barge-in
+  (`interrupted`) cancels it; on timeout it sends the model a text nudge ("the user
+  has no questions, continue"), which makes it advance. On the **last slide** the
+  timer is not armed (nothing to advance to).
+
+**Kickoff.** The model stays silent until it receives input, so on Start the app
+sends one text turn ("Please begin the presentation now.") to trigger the opening.
+
+**The per-slide loop.** narrate -> "any questions?" -> wait 8s ->
+  (question -> answer -> "anything else?" -> wait 8s) OR (silence / "no" -> next slide).
+
+**Two ways to advance, both converging on goto_slide(next):**
+1. 8s of silence -> app timer fires -> nudge -> model advances.
+2. User says "no" / "go ahead" -> model advances immediately (prompt-driven).
+
+**Slide numbers are 1-based in the tool.** `goto_slide` now takes the slide NUMBER
+as shown on screen (first slide = 1) and converts to the 0-based array index
+internally. This removed the index-vs-number confusion the model kept hitting.
+
+**Deck reference to the model** now includes each slide's **bullets** (not just the
+title), so narration is accurate and the model picks the right slide first try.
+
+**Known fuzzy bits (tuning, not bugs):** narration length (~1-2 min) is
+prompt-guided and varies; telling a real question from mic noise inside the 8s
+window may need thresholds; headphones are required so the model's own voice does
+not trip the mic and self-interrupt.
+
+---
+
 ## Open questions / to decide later
 - **Deck topic** — still to pick.
 - **Exact Live model string** — using the current preview native-audio model; confirm
