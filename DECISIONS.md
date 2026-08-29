@@ -181,6 +181,24 @@ mic or play audio — that plumbing is still ours to write.
 play **24 kHz PCM**. A sample-rate mismatch is the #1 source of "chipmunk" / garbled
 / silent audio. Keep the two rates straight: **16 kHz up, 24 kHz down.**
 
+**Why "chipmunk" — the mechanism.** A sample rate is just a *clock*: a label
+saying "run through these samples at N per second." The samples themselves
+carry no timing — the rate tells the player how fast to consume them. Get the
+label wrong and the audio plays at the wrong speed, and speed and pitch move
+together (like spinning a record at the wrong RPM):
+- Consumed **faster** than it was recorded → shorter, **higher-pitched,
+  sped-up** → the classic chipmunk.
+- Consumed **slower** → longer, **deep and draggy**.
+
+Same samples, different clock. In this app the risk sits on both legs:
+- **Output (what you actually hear as chipmunk):** Gemini's audio is 24 kHz.
+  `createBuffer(1, len, 24000)` must say exactly 24000. Declare it 48000 and
+  the browser races through the samples in half the time → high and fast.
+- **Input (shows up as garbled, not cute):** if we capture at 48 kHz but label
+  it `rate=16000`, the *claimed* rate doesn't match the data, and the model
+  mis-reads the timing → distorted, poorly-recognized speech. Fix: pin the
+  AudioContext to 16 kHz so the data genuinely *is* 16 kHz.
+
 ---
 
 ## Technical note — the Live session is event-driven (callbacks, not request/response)

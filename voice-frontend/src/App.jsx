@@ -1,6 +1,8 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { GoogleGenAI, Modality } from "@google/genai";
 import { MODEL, API_VERSION, TOKEN_URL } from "./config";
+import { slides } from "./slides";
+import Deck from "./Deck";
 
 export default function App() {
   const [status, setStatus] = useState("idle");
@@ -13,6 +15,17 @@ export default function App() {
   const outCtxRef = useRef(null);     // 24 kHz AudioContext for Gemini's audio
   const nextStartRef = useRef(0);     // when the next chunk should start (seconds)
   const sourcesRef = useRef([]);      // scheduled sources, so barge-in can stop them
+  const [currentSlide, setCurrentSlide] = useState(0);   // which slide is showing
+
+  // keyboard nav: left/right arrows move slides (works with OR without voice)
+  useEffect(() => {
+    function onKey(e) {
+      if (e.key === "ArrowRight") setCurrentSlide((i) => Math.min(i + 1, slides.length - 1));
+      if (e.key === "ArrowLeft")  setCurrentSlide((i) => Math.max(i - 1, 0));
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   function log(msg) {
     console.log(msg);
@@ -142,6 +155,7 @@ export default function App() {
   return (
     <div style={{ padding: 40, fontFamily: "sans-serif" }}>
       <h1>Voice Slide Presenter</h1>
+      <Deck slides={slides} current={currentSlide} />
       <button onClick={handleStart}>Start</button>
       <p>Status: {status}</p>
       <div style={{ height: 10, width: 300, background: "#333", borderRadius: 5, margin: "8px 0" }}>
