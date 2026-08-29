@@ -198,6 +198,88 @@ watch `onopen` fire.
 
 ---
 
+## Step 2C — Mic capture: the mental model
+
+**The problem.** The mic does not hand us "16 kHz PCM." The browser gives **Float32
+samples** (−1..1) at the *hardware* rate (usually 48 kHz). Gemini requires **16 kHz,
+16-bit integer PCM**. So every audio chunk must be: (1) resampled to 16 kHz, (2)
+converted Float32 → Int16, (3) base64-encoded, (4) sent.
+
+**How each piece is handled.**
+- **Resample:** create the `AudioContext` with `{ sampleRate: 16000 }` so the *browser*
+  resamples the mic down to 16 kHz for us — no hand-written resampling math.
+- **Float → Int16:** clamp each sample to [−1, 1], scale into the Int16 range,
+  base64-encode the bytes.
+- **Send:** `session.sendRealtimeInput({ audio: { data: b64, mimeType: "audio/pcm;rate=16000" } })`.
+- **Receive (round trip):** Gemini's audio comes back in
+  `serverContent.modelTurn.parts[].inlineData.data` (base64, 24 kHz); `turnComplete`
+  marks the end of a reply, `interrupted` marks a barge-in.
+
+**Pipeline:** mic → 16 kHz AudioContext → ScriptProcessorNode chunks →
+Float32→Int16→base64 → `sendRealtimeInput`.
+
+**The audio graph (how the pipeline is actually wired).** Web Audio works by
+connecting processing *nodes* into a chain; audio flows through and we tap it
+midway. `startMic()` builds:
+
+    mic → [MediaStreamSource] → [ScriptProcessor] → destination (speakers)
+                                      │
+                                      └──> onaudioprocess fires per chunk
+                                           (measure level + encode + send)
+
+- **MediaStreamSource** — entry point; wraps the mic stream into the graph.
+- **ScriptProcessor(4096,1,1)** — hands our JS raw samples in 4096-sample
+  mono chunks via `onaudioprocess`.
+- **destination** — the speakers. It outputs silence here, BUT the connection
+  is mandatory: a ScriptProcessor only runs `onaudioprocess` if it's connected
+  to an output. Omit `processor.connect(ctx.destination)` and the callback
+  never fires — dead meter, nothing sent, no error. (#1 silent failure here.)
+
+## Audio encoding: mic → Gemini format
+
+The browser mic and the Gemini Live API speak different audio "dialects."
+`floatTo16BitPCMBase64()` is the translator. The pipeline:
+
+```
+Float32 decimals  →  16-bit integers  →  raw bytes  →  base64 text
+   (what the mic         (what Gemini      (the actual      (safe to send
+```
+Why each hop:
+- Float32 → Int16: Gemini wants 16-bit PCM. Clamp to [-1,1] first, or a
+  stray >1 sample silently overflows the Int16 range and flips to a glitch.
+- Int16 → bytes: same memory, new lens (Uint8Array on int16.buffer — NOT
+  a copy). Dropping `.buffer` silently corrupts the audio.
+- bytes → base64: the channel expects text, not raw binary. ~33% larger,
+  fine for short mic chunks.
+
+## Step 2C — Classic mistakes to stay ahead of
+- **Mic permission prompt.** The first "Start" click triggers Chrome's mic prompt —
+  must **Allow**. A block shows up as a `NotAllowedError` and a dead level meter
+  (fix: address-bar mic icon → allow → reload).
+- **Use headphones.** Without them, the speakers feed back into the mic and the model
+  "hears itself" and interrupts/babbles. `echoCancellation: true` helps; headphones
+  are the real fix for testing.
+- **Sample-rate mismatch = the #1 audio bug.** If the context is not pinned to 16 kHz,
+  you send (e.g.) 48 kHz data *labelled* 16 kHz → chipmunk / garbled. We pin it and
+  log the actual rate; if it is not 16000, that is the culprit.
+- **ScriptProcessorNode is deprecated** (but runs everywhere). Chosen for
+  simplicity/readability in the prototype; the non-deprecated upgrade is an
+  **AudioWorklet** (off-main-thread, smoother) at the cost of a second file.
+- **The "silent connection" is load-bearing.** `processor.connect(ctx.destination)`
+  looks pointless (it only outputs silence) but without it `onaudioprocess`
+  never fires. Everything *looks* wired, meter's dead, nothing reaches Gemini,
+  no error thrown. If capture is silent, check this line first.
+- **Clamp before scaling, or you get a silent glitch.** A sample that sneaks
+  past 1.0 (browser noise-suppression/gain can overshoot) times 32767 exceeds
+  the Int16 ceiling, overflows, and *flips* to a negative value → an audible
+  pop, with **no error thrown**. `Math.max(-1, Math.min(1, x))` prevents it.
+- **`new Uint8Array(int16.buffer)` — the `.buffer` is load-bearing.** It's a
+  second *lens* onto the same memory (reads it as bytes), not a copy. Drop
+  `.buffer` and JS copies the integer *values* into single bytes → corrupted
+  audio, silently. Same memory, new lens = right; copy the numbers = wrong.
+
+---
+
 ## Open questions / to decide later
 - **Deck topic** — still to pick.
 - **Exact Live model string** — using the current preview native-audio model; confirm
