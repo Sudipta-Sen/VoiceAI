@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect } from "react";
 import { GoogleGenAI, Modality } from "@google/genai";
 import { MODEL, API_VERSION, TOKEN_URL } from "./config";
-import { slides } from "./slides";
-import Deck from "./Deck";
+import { Deck, slides } from "./deck";
+import { SYSTEM_INSTRUCTION } from "./prompt";
+import { tools, handleToolCall } from "./tools";
 
 export default function App() {
   const [status, setStatus] = useState("idle");
@@ -124,11 +125,20 @@ export default function App() {
 
       sessionRef.current = await ai.live.connect({
         model: MODEL,
-        config: { responseModalities: [Modality.AUDIO] },
+        config: {
+          responseModalities: [Modality.AUDIO],
+          systemInstruction: SYSTEM_INSTRUCTION,
+          tools,
+        },
         callbacks: {
           onopen: () => { log("🔊 Live session OPENED"); setStatus("connected ✅"); },
           onmessage: (m) => {
             if (m.setupComplete) log("setupComplete");
+
+            // control loop: hand any tool call to the tools module
+            if (m.toolCall) {
+              handleToolCall(m.toolCall, { session: sessionRef.current, setCurrentSlide, log });
+            }
             const c = m.serverContent;
             if (c?.modelTurn?.parts) {
               for (const part of c.modelTurn.parts) {
